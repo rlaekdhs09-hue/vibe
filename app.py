@@ -1,466 +1,246 @@
 import streamlit as st
-import sqlite3
-import hashlib
-import secrets
+import sqlite3, hashlib, secrets
 from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Rectangle, FancyArrowPatch
 
-DB_PATH = Path(__file__).parent / "users.db"
+DB = Path(__file__).parent / "users.db"
 
-# -----------------------------
-# 기본 설정
-# -----------------------------
-st.set_page_config(
-    page_title="Vibe Space Designer",
-    page_icon="🎪",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="VIBE SPACE DESIGNER", page_icon="🎪", layout="wide")
 
-# -----------------------------
-# DB / 회원 기능
-# -----------------------------
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    return conn
+def conn():
+    c = sqlite3.connect(DB, check_same_thread=False)
+    c.execute("""CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL)""")
+    c.commit()
+    return c
 
+def hpw(p, salt):
+    return hashlib.pbkdf2_hmac("sha256", p.encode(), salt.encode(), 120000).hex()
 
-def hash_password(password: str, salt: str) -> str:
-    return hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt.encode("utf-8"),
-        120000
-    ).hex()
-
-
-def create_user(username: str, password: str):
-    username = username.strip()
-    if not username or not password:
-        return False, "아이디와 비밀번호를 입력해주세요."
-    if len(username) < 3:
-        return False, "아이디는 3자 이상으로 입력해주세요."
-    if len(password) < 6:
-        return False, "비밀번호는 6자 이상으로 입력해주세요."
-
+def signup(u, p):
+    u = u.strip()
+    if not u or not p: return False, "아이디와 비밀번호를 입력해주세요."
+    if len(u) < 3: return False, "아이디는 3자 이상이어야 합니다."
+    if len(p) < 6: return False, "비밀번호는 6자 이상이어야 합니다."
     salt = secrets.token_hex(16)
-    password_hash = f"{salt}${hash_password(password, salt)}"
-
     try:
-        conn = get_conn()
-        conn.execute(
-            "INSERT INTO users(username, password_hash, created_at) VALUES (?, ?, ?)",
-            (username, password_hash, datetime.now().isoformat(timespec="seconds"))
-        )
-        conn.commit()
-        conn.close()
-        return True, "회원가입이 완료되었습니다. 로그인해주세요."
+        c=conn()
+        c.execute("INSERT INTO users(username,password_hash,created_at) VALUES(?,?,?)",
+                  (u, f"{salt}${hpw(p,salt)}", datetime.now().isoformat(timespec="seconds")))
+        c.commit(); c.close()
+        return True, "회원가입이 완료되었습니다."
     except sqlite3.IntegrityError:
         return False, "이미 존재하는 아이디입니다."
 
-
-def verify_user(username: str, password: str) -> bool:
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT password_hash FROM users WHERE username = ?",
-        (username.strip(),)
-    ).fetchone()
-    conn.close()
-
-    if not row:
-        return False
-
+def login(u,p):
+    c=conn(); row=c.execute("SELECT password_hash FROM users WHERE username=?",(u.strip(),)).fetchone(); c.close()
+    if not row: return False
     try:
-        salt, stored_hash = row[0].split("$", 1)
-        return secrets.compare_digest(
-            stored_hash,
-            hash_password(password, salt)
-        )
-    except ValueError:
-        return False
+        salt, saved=row[0].split("$",1)
+        return secrets.compare_digest(saved,hpw(p,salt))
+    except: return False
 
+EVENT = {
+"공연":("무대",["객석","음향·조명","출연자 대기실"],"관객의 시야와 무대 집중도를 우선하는 전면 무대형 구조"),
+"축제":("메인무대",["체험·부스존","푸드존","휴게존"],"여러 활동을 동시에 수용하는 개방형 구조"),
+"전시":("전시존",["전시 A","전시 B","전시 C·체험"],"관람 흐름이 자연스럽게 이어지는 순환형 구조"),
+"박람회":("전시·부스존",["상담존","등록·접수","휴게존"],"부스 접근성과 이동 효율을 우선하는 구조"),
+"컨퍼런스":("발표무대",["좌석존","등록대","네트워킹존"],"발표 집중도와 네트워킹 동선을 분리한 구조"),
+"학교 행사":("메인무대",["학생활동존","객석","운영본부"],"학생 참여와 안전한 이동을 고려한 구조"),
+"기타":("메인존",["참여존","휴게존","운영존"],"행사 목적에 따라 기능을 유연하게 배치하는 구조")
+}
+MOOD={
+"활기찬":("참여와 이동이 많은 역동적인 공간","포토존과 체험공간을 주요 동선에 배치합니다."),
+"차분한":("여유 있고 소음이 적은 공간","휴게공간과 좌석 사이에 충분한 여유를 둡니다."),
+"고급스러운":("넓은 여백과 명확한 시각적 중심","입구부터 메인 공간까지 시각적 흐름을 강조합니다."),
+"캐주얼한":("자유롭고 편안한 공간","라운지·휴게공간을 확대합니다."),
+"미래지향적":("미디어와 디지털 체험 중심 공간","디지털 체험존을 메인 동선에 연결합니다."),
+"자연친화적":("자연광과 개방감을 활용한 공간","창가·외곽의 휴게공간과 그린존을 활용합니다.")
+}
+AGE={
+"10대 이하":"보호자 대기공간, 안전요원, 직관적인 안내를 강화합니다.",
+"10~20대":"포토존·체험존·SNS 공유 요소를 주요 동선에 배치합니다.",
+"30~40대":"좌석과 휴게공간의 접근성을 높입니다.",
+"50대 이상":"좌석·휴식·안내·화장실 접근성을 높입니다.",
+"전 연령":"다양한 연령층의 접근성과 안전성을 균형 있게 고려합니다."
+}
 
-# -----------------------------
-# 행사장 설계 로직
-# -----------------------------
-def recommend_layout(event_type, people, duration, age_group, mood, fee, place):
-    # 규모
-    if people <= 50:
-        size = "소규모"
-        area_per_person = 1.8
-    elif people <= 150:
-        size = "중규모"
-        area_per_person = 1.6
-    elif people <= 400:
-        size = "대규모"
-        area_per_person = 1.45
-    else:
-        size = "초대형"
-        area_per_person = 1.3
+def design(t,n,h,a,m,fee,place,extra):
+    if n<=50: scale,area="소규모",max(80,int(n*2.0))
+    elif n<=150: scale,area="중소규모",int(n*1.8)
+    elif n<=400: scale,area="중규모",int(n*1.6)
+    elif n<=1000: scale,area="대규모",int(n*1.5)
+    else: scale,area="초대형",int(n*1.4)
+    if h<=2: time="입장→핵심 프로그램→퇴장 흐름을 단순화합니다."
+    elif h<=5: time="중간 체류를 고려해 휴게·편의시설을 주요 동선 가까이에 배치합니다."
+    else: time="장시간 체류를 고려해 휴게·식음·편의시설을 충분히 확보합니다."
+    feeplan=("무료 행사로 입장 절차를 단순화합니다." if fee==0 else
+             "일반 유료 행사로 접수·결제·입장 동선을 분리합니다." if fee<=30000 else
+             "프리미엄 행사로 체크인과 별도 서비스 공간을 고려합니다.")
+    placeplan=("실내의 비상구·소방시설·기둥·냉난방을 고려합니다." if place=="실내" else
+               "실외의 기상 변화, 그늘, 전기·음향 보호, 대피공간을 고려합니다.")
+    extra_notes=[]
+    low=extra.lower()
+    for k,v in {
+        "포토":"포토존을 주요 동선에 배치합니다.","사진":"포토존을 주요 동선에 배치합니다.",
+        "음식":"푸드존을 휴게공간과 가깝게 배치합니다.","푸드":"푸드존을 휴게공간과 가깝게 배치합니다.",
+        "푸드트럭":"푸드존을 외곽에 배치해 대기 동선을 확보합니다.","무대":"메인무대의 비중을 확대합니다.",
+        "부스":"부스를 주요 이동 동선에 분산합니다.","굿즈":"굿즈존을 출구 방향에 연결합니다.",
+        "휴식":"휴게존의 비중을 확대합니다.","휴게":"휴게존의 비중을 확대합니다.",
+        "vip":"VIP 공간을 일반 동선과 분리합니다.","체험":"체험존을 중심 동선에 배치합니다."
+    }.items():
+        if k in low and v not in extra_notes: extra_notes.append(v)
+    return dict(scale=scale,area=area,event=t,n=n,h=h,age=a,mood=m,fee=fee,place=place,extra=extra,
+                main=EVENT[t][0],secondary=EVENT[t][1],event_desc=EVENT[t][2],
+                mood_key=MOOD[m][0],mood_detail=MOOD[m][1],ageplan=AGE[a],
+                time=time,feeplan=feeplan,placeplan=placeplan,extra_notes=extra_notes)
 
-    estimated_area = max(80, int(people * area_per_person))
-
-    # 행사 유형
-    type_rules = {
-        "공연": {
-            "zones": ["무대", "객석", "FOH/음향", "대기실", "출입구", "안전통로"],
-            "stage_ratio": 0.18,
-            "features": ["무대 정면 시야 확보", "음향·조명 장비 구역", "출연자 대기공간"]
-        },
-        "축제": {
-            "zones": ["메인무대", "체험/부스", "푸드존", "휴게존", "출입구", "안전통로"],
-            "stage_ratio": 0.12,
-            "features": ["동선 분산", "부스 간 간격 확보", "휴게공간 배치"]
-        },
-        "전시": {
-            "zones": ["전시존", "작품 관람 동선", "안내/접수", "휴게존", "출입구", "보관공간"],
-            "stage_ratio": 0.06,
-            "features": ["순환형 관람 동선", "작품 간 시야 확보", "입·퇴장 동선 분리"]
-        },
-        "박람회": {
-            "zones": ["전시부스", "상담존", "등록/접수", "휴게존", "무대/발표존", "안전통로"],
-            "stage_ratio": 0.10,
-            "features": ["부스 접근성", "상담 동선 확보", "사람이 몰리는 구역 분산"]
-        },
-        "컨퍼런스": {
-            "zones": ["발표무대", "좌석존", "등록대", "네트워킹존", "대기/휴게존", "안전통로"],
-            "stage_ratio": 0.12,
-            "features": ["발표자와 청중의 시야 확보", "등록대 전면 배치", "네트워킹 공간 확보"]
-        },
-        "학교 행사": {
-            "zones": ["메인무대", "학생 활동존", "객석", "운영본부", "출입구", "안전통로"],
-            "stage_ratio": 0.14,
-            "features": ["학생 이동 동선", "운영진 통제구역", "혼잡 구역 분산"]
-        },
-        "기타": {
-            "zones": ["메인존", "참여존", "휴게존", "운영존", "출입구", "안전통로"],
-            "stage_ratio": 0.10,
-            "features": ["입장·퇴장 동선", "운영구역 분리", "휴게공간 확보"]
-        }
-    }
-
-    rule = type_rules.get(event_type, type_rules["기타"])
-
-    # 분위기
-    mood_rules = {
-        "활기찬": ("밝은 조명 + 중앙 집중형 메인존", "참여형 프로그램을 중앙에 배치"),
-        "차분한": ("낮은 조도 + 여유 있는 좌석 간격", "소음이 적은 구역을 외곽에 배치"),
-        "고급스러운": ("간접조명 + 넓은 여백", "입구와 메인존의 시각적 임팩트 강화"),
-        "캐주얼한": ("자유로운 좌석 + 휴게공간 확대", "스탠딩/라운지형 공간 혼합"),
-        "미래지향적": ("미디어월 + LED/프로젝션 중심", "디지털 체험존을 메인 동선에 배치"),
-        "자연친화적": ("자연광 + 식물/목재 요소", "야외 또는 창가 휴게존 활용")
-    }
-    mood_plan, mood_detail = mood_rules.get(mood, ("균형 잡힌 조명과 동선", "공간별 기능을 명확히 분리"))
-
-    # 연령대
-    age_rules = {
-        "10대 이하": "보호자 대기·휴게공간과 안전요원 배치를 강화",
-        "10~20대": "포토존·체험존·SNS 공유 포인트를 동선에 포함",
-        "30~40대": "접근성이 좋은 좌석과 휴게공간을 충분히 확보",
-        "50대 이상": "좌석 중심 구성, 안내 표지와 휴식공간을 강화",
-        "전 연령": "유아·청소년·성인 모두 접근하기 쉬운 동선을 구성"
-    }
-    age_plan = age_rules.get(age_group, age_rules["전 연령"])
-
-    # 시간
-    if duration <= 2:
-        time_plan = "짧은 행사이므로 입장→메인 프로그램→퇴장 동선을 단순화"
-    elif duration <= 5:
-        time_plan = "중간 휴식과 이동 시간을 고려해 휴게존을 메인 동선 가까이에 배치"
-    else:
-        time_plan = "장시간 행사이므로 휴게·식음·화장실 접근성을 특히 강화"
-
-    # 가격
-    if fee <= 0:
-        fee_plan = "무료 행사: 입장 확인 절차를 단순화하고 대기열을 최소화"
-    elif fee <= 30000:
-        fee_plan = "일반 유료 행사: 접수·결제·입장 동선을 분리"
-    else:
-        fee_plan = "프리미엄 행사: 체크인 공간과 VIP/프리미엄 휴게존을 별도 구성"
-
-    # 실내/실외
-    if place == "실외":
-        place_plan = "실외: 우천 대비 공간, 그늘/휴식, 전기·음향 보호, 비상대피 동선을 함께 고려"
-    else:
-        place_plan = "실내: 비상구, 소방시설 접근, 냉난방, 기둥·벽면에 의한 시야 방해를 고려"
-
-    safety = [
-        f"예상 인원 {people:,}명 기준으로 출입구 병목을 피하도록 입·퇴장 동선을 분리",
-        "메인 동선에는 충분한 폭의 안전통로를 확보",
-        "행사 운영본부를 출입구와 메인존을 동시에 확인하기 쉬운 위치에 배치",
-        "비상구와 대피 동선은 행사 장식물이나 부스로 막지 않도록 설계"
-    ]
-
-    if place == "실외":
-        safety.append("기상 변화에 대비한 대체 동선과 임시 대피공간을 계획")
-
-    return {
-        "size": size,
-        "estimated_area": estimated_area,
-        "zones": rule["zones"],
-        "features": rule["features"],
-        "mood_plan": mood_plan,
-        "mood_detail": mood_detail,
-        "age_plan": age_plan,
-        "time_plan": time_plan,
-        "fee_plan": fee_plan,
-        "place_plan": place_plan,
-        "safety": safety,
-        "stage_ratio": rule["stage_ratio"],
-    }
-
-
-def draw_floor_plan(result, place):
-    fig, ax = plt.subplots(figsize=(12, 7))
-    ax.set_xlim(0, 100)
-    ax.set_ylim(0, 65)
-    ax.axis("off")
-
-    # 전체 공간
-    ax.add_patch(Rectangle((2, 2), 96, 61, fill=False, linewidth=2))
-    ax.text(50, 60.5, f"VIBE SPACE DESIGN • {place}", ha="center", va="center", fontsize=15, fontweight="bold")
-
-    zones = [
-        (5, 45, 90, 13, "메인 프로그램 / 무대·발표"),
-        (5, 25, 55, 16, "객석 / 참여존"),
-        (63, 25, 30, 16, "체험·부스 / 네트워킹"),
-        (5, 7, 28, 12, "휴게존"),
-        (37, 7, 25, 12, "운영본부 / 접수"),
-        (66, 7, 27, 12, "출입구 / 안내"),
-    ]
-
-    for x, y, w, h, label in zones:
-        ax.add_patch(Rectangle((x, y), w, h, alpha=0.18, linewidth=1.5))
-        ax.text(x + w/2, y + h/2, label, ha="center", va="center", fontsize=10)
-
-    # 안전 통로
-    ax.annotate("", xy=(94, 23), xytext=(94, 53),
-                arrowprops=dict(arrowstyle="<->", linewidth=2))
-    ax.text(96, 38, "안전통로", rotation=90, va="center", fontsize=9)
-
-    ax.annotate("", xy=(67, 5), xytext=(67, 22),
-                arrowprops=dict(arrowstyle="<->", linewidth=2))
-    ax.text(69, 13.5, "입·퇴장\n동선", va="center", fontsize=9)
-
-    ax.set_title(
-        f"권장 규모: {result['size']} / 예상 필요 면적: 약 {result['estimated_area']:,}㎡",
-        fontsize=11
-    )
+def floor(r):
+    fig,ax=plt.subplots(figsize=(14,8))
+    ax.set_xlim(0,120); ax.set_ylim(0,78); ax.set_aspect("equal"); ax.axis("off")
+    ax.add_patch(Rectangle((3,3),114,70,fill=False,linewidth=2.5))
+    ax.text(60,76,f"VIBE SPACE DESIGN — {r['event']}",ha="center",fontsize=16,fontweight="bold")
+    boxes=[
+      (8,56,104,12,r["main"],"MAIN"),
+      (8,34,62,18,"객석 / 주요 참여 공간","AUDIENCE"),
+      (74,34,38,18,"체험·부스존","ACTIVITY"),
+      (8,20,30,10,"휴게존","REST"),
+      (42,20,30,10,"운영본부","STAFF"),
+      (76,20,36,10,"안전·응급존","SAFETY"),
+      (8,7,30,8,"입구 · 접수","ENTRY"),
+      (42,7,30,8,"화장실 / 편의시설","FACILITY"),
+      (76,7,36,8,"출구","EXIT")]
+    if r["event"]=="공연":
+        boxes += [(8,28,62,4,"음향·조명 / FOH","TECH"),(74,56,38,8,"출연자 대기실","BACKSTAGE")]
+    elif r["event"]=="축제":
+        boxes += [(74,56,38,8,"푸드존","FOOD"),(74,25,38,7,"포토존","PHOTO")]
+    elif r["event"]=="전시":
+        boxes=[
+          (8,56,104,12,"전시 메인존","EXHIBITION"),
+          (8,34,30,18,"전시 A","ZONE A"),(42,34,30,18,"전시 B","ZONE B"),
+          (76,34,36,18,"전시 C / 체험","ZONE C"),
+          (8,20,30,10,"휴게존","REST"),(42,20,30,10,"안내·접수","INFO"),
+          (76,20,36,10,"작품 보관 / 운영","STAFF"),
+          (8,7,30,8,"입구","ENTRY"),(42,7,30,8,"편의시설","FACILITY"),
+          (76,7,36,8,"출구","EXIT")]
+    elif r["event"]=="박람회":
+        boxes=[
+          (8,56,104,10,"발표 / 메인존","MAIN"),
+          (8,36,22,16,"부스 A","BOOTH A"),(34,36,22,16,"부스 B","BOOTH B"),
+          (60,36,22,16,"부스 C","BOOTH C"),(86,36,26,16,"부스 D","BOOTH D"),
+          (8,20,30,10,"등록·접수","REG"),(42,20,30,10,"상담·네트워킹","NETWORK"),
+          (76,20,36,10,"휴게존","REST"),(8,7,30,8,"입구","ENTRY"),
+          (42,7,30,8,"편의시설","FACILITY"),(76,7,36,8,"출구","EXIT")]
+    for x,y,w,h,label,small in boxes:
+        ax.add_patch(Rectangle((x,y),w,h,alpha=.18,linewidth=1.5))
+        ax.text(x+w/2,y+h/2+1,label,ha="center",va="center",fontsize=10,fontweight="bold")
+        ax.text(x+w/2,y+h/2-2.5,small,ha="center",va="center",fontsize=7)
+    for s,e in [((22,15),(22,34)),((38,43),(70,43)),((70,43),(92,43)),((98,34),(98,15))]:
+        ax.add_patch(FancyArrowPatch(s,e,arrowstyle="<->",mutation_scale=12,linewidth=1.7))
+    ax.text(24,25,"입장 동선",fontsize=8,rotation=90,va="center")
+    ax.text(54,45.5,"주요 이동 동선",fontsize=8,ha="center")
+    ax.text(100,25,"퇴장 동선",fontsize=8,rotation=90,va="center")
+    ax.plot([4,116],[18,18],linestyle="--",linewidth=1)
+    ax.plot([72,72],[4,72],linestyle="--",linewidth=1)
+    ax.text(60,16.2,"외곽 안전통로",ha="center",fontsize=8)
+    ax.text(5,1,f"예상 인원 {r['n']:,}명  |  장소: {r['place']}  |  분위기: {r['mood']}",fontsize=9)
     return fig
 
+def explanations(r):
+    return [
+    f"**전체 배치 전략**  \n{r['n']:,}명 규모의 {r['event']}을 기준으로 약 **{r['area']:,}㎡**를 권장합니다. {r['event_desc']}를 중심으로 메인 공간은 접근성과 시야가 좋은 위치에 두고 운영·안전 공간은 전체를 관리하기 쉬운 위치에 배치했습니다.",
+    f"**① 입장·퇴장 동선**  \n입구와 출구를 분리해 방문객이 한곳에서 뒤섞이는 것을 줄였습니다. 입장 후 접수·안내를 거쳐 주요 공간으로 이동하고 행사 종료 후에는 출구로 자연스럽게 빠져나가도록 구성했습니다.",
+    f"**② 핵심 공간**  \n메인 공간을 가장 넓고 시야 확보가 쉬운 위치에 배치했습니다. 주변에는 {r['main']}, {', '.join(r['secondary'])} 등을 연결해 주요 프로그램 사이의 이동거리를 줄였습니다.",
+    f"**③ 인원수 반영**  \n예상 인원 {r['n']:,}명을 고려해 중앙 이동축과 외곽 안전통로를 확보했습니다. 특히 입구·출구와 메인 공간 사이의 혼잡을 줄이도록 접수 공간을 주요 동선과 적절히 분리했습니다.",
+    f"**④ 연령대 반영**  \n주요 방문객은 {r['age']}이며, {r['ageplan']}",
+    f"**⑤ 분위기 반영**  \n'{r['mood']}' 분위기를 위해 {r['mood_key']}로 설계했습니다. {r['mood_detail']}",
+    f"**⑥ 진행 시간 반영**  \n약 {r['h']:g}시간 행사이므로 {r['time']}",
+    f"**⑦ 장소 조건**  \n{r['placeplan']}",
+    f"**⑧ 입장료·운영**  \n{r['feeplan']}",
+    ("**⑨ 추가 요구사항 반영**  \n" + "  \n".join("- "+x for x in r["extra_notes"])) if r["extra_notes"] else "",
+    "**⑩ 안전 설계**  \n비상구와 피난 동선은 장식물·부스로 막지 않는 것을 전제로 합니다. 운영본부와 안전·응급존은 주요 공간을 빠르게 확인하고 접근할 수 있도록 배치했습니다. 실제 행사에서는 현장 구조와 소방·피난·수용인원 기준을 별도로 확인해야 합니다."
+    ]
 
-# -----------------------------
-# 세션 상태
-# -----------------------------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "username" not in st.session_state:
-    st.session_state.username = ""
+if "logged" not in st.session_state: st.session_state.logged=False
+if "user" not in st.session_state: st.session_state.user=""
+if "result" not in st.session_state: st.session_state.result=None
 
-# -----------------------------
-# 로그인 전 화면
-# -----------------------------
-if not st.session_state.logged_in:
-    st.markdown(
-        """
-        <div style="text-align:center;padding:35px 0 15px 0;">
-            <h1 style="font-size:48px;margin-bottom:4px;">🎪 VIBE SPACE DESIGNER</h1>
-            <p style="font-size:20px;color:#666;">사용자의 니즈를 분석해 행사장을 설계해드립니다.</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    tab1, tab2 = st.tabs(["로그인", "회원가입"])
-
-    with tab1:
-        st.subheader("로그인")
-        login_id = st.text_input("아이디", key="login_id")
-        login_pw = st.text_input("비밀번호", type="password", key="login_pw")
-
-        if st.button("로그인", use_container_width=True, type="primary"):
-            if verify_user(login_id, login_pw):
-                st.session_state.logged_in = True
-                st.session_state.username = login_id.strip()
-                st.success("로그인되었습니다.")
-                st.rerun()
+if not st.session_state.logged:
+    st.markdown("<h1 style='text-align:center'>🎪 VIBE SPACE DESIGNER</h1><p style='text-align:center;font-size:20px'>사용자의 니즈를 분석해 행사장을 설계합니다.</p>",unsafe_allow_html=True)
+    a,b=st.tabs(["로그인","회원가입"])
+    with a:
+        u=st.text_input("아이디",key="li"); p=st.text_input("비밀번호",type="password",key="lp")
+        if st.button("로그인",type="primary",use_container_width=True):
+            if login(u,p): st.session_state.logged=True; st.session_state.user=u.strip(); st.rerun()
+            else: st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
+    with b:
+        u=st.text_input("새 아이디",key="su"); p=st.text_input("새 비밀번호",type="password",key="sp"); p2=st.text_input("비밀번호 확인",type="password",key="sp2")
+        if st.button("회원가입",use_container_width=True):
+            if p!=p2: st.error("비밀번호가 일치하지 않습니다.")
             else:
-                st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
-
-    with tab2:
-        st.subheader("회원가입")
-        signup_id = st.text_input("새 아이디", key="signup_id")
-        signup_pw = st.text_input("새 비밀번호", type="password", key="signup_pw")
-        signup_pw2 = st.text_input("비밀번호 확인", type="password", key="signup_pw2")
-
-        if st.button("회원가입", use_container_width=True):
-            if signup_pw != signup_pw2:
-                st.error("비밀번호가 일치하지 않습니다.")
-            else:
-                ok, msg = create_user(signup_id, signup_pw)
-                if ok:
-                    st.success(msg)
-                else:
-                    st.error(msg)
-
-    st.info("💡 GitHub + Streamlit Cloud에서 바로 실행할 수 있는 독립형 데모입니다.")
+                ok,msg=signup(u,p)
+                (st.success if ok else st.error)(msg)
     st.stop()
 
-# -----------------------------
-# 메인 앱
-# -----------------------------
 with st.sidebar:
     st.markdown("## 🎪 VIBE SPACE")
-    st.caption(f"로그인 사용자: **{st.session_state.username}**")
-    st.divider()
-
-    if st.button("로그아웃", use_container_width=True):
-        st.session_state.logged_in = False
-        st.session_state.username = ""
-        st.rerun()
-
-    st.markdown("---")
-    st.caption("Vibe Coding Project")
-    st.caption("사용자의 니즈 → 행사장 설계안")
+    st.caption(f"사용자: **{st.session_state.user}**")
+    if st.button("로그아웃",use_container_width=True):
+        st.session_state.logged=False; st.session_state.user=""; st.session_state.result=None; st.rerun()
 
 st.title("🎪 행사장 설계 AI")
-st.write("행사 정보를 입력하면 규모·동선·공간 구성·분위기·안전 요소를 종합해 권장 설계를 만들어드립니다.")
+st.write("행사 유형·규모·연령대·분위기·장소와 추가 요구사항을 종합해 상세 배치도와 설계 설명을 생성합니다.")
+st.markdown("### 1. 행사 정보 입력")
 
-with st.form("event_design_form"):
-    st.subheader("1. 행사 기본 정보")
+with st.form("form"):
+    c1,c2=st.columns(2)
+    with c1:
+        typ=st.selectbox("행사장의 유형",list(EVENT))
+        n=st.number_input("예상 인원수 (명)",1,100000,200,10)
+        h=st.number_input("진행 시간 (시간)",.5,24.,4.,.5)
+        age=st.selectbox("예상 연령대",list(AGE))
+    with c2:
+        mood=st.selectbox("원하는 분위기",list(MOOD))
+        fee=st.number_input("예상 입장료 (원)",0,10000000,10000,1000)
+        place=st.radio("행사 장소",["실내","실외"],horizontal=True)
+        extra=st.text_area("추가 요구사항",placeholder="예: 포토존을 크게 만들고 싶어요. 푸드트럭을 많이 넣고 싶어요. 무대를 크게 만들고 싶어요.")
+    submit=st.form_submit_button("✨ 상세 행사장 설계하기",use_container_width=True,type="primary")
 
-    col1, col2 = st.columns(2)
+if submit:
+    st.session_state.result=design(typ,n,h,age,mood,fee,place,extra)
 
-    with col1:
-        event_type = st.selectbox(
-            "행사장의 유형",
-            ["공연", "축제", "전시", "박람회", "컨퍼런스", "학교 행사", "기타"]
-        )
-        people = st.number_input(
-            "예상 인원수 (명)",
-            min_value=1,
-            max_value=100000,
-            value=200,
-            step=10
-        )
-        duration = st.number_input(
-            "진행 시간 (시간)",
-            min_value=0.5,
-            max_value=24.0,
-            value=4.0,
-            step=0.5
-        )
-        age_group = st.selectbox(
-            "예상 연령대",
-            ["10대 이하", "10~20대", "30~40대", "50대 이상", "전 연령"]
-        )
-
-    with col2:
-        mood = st.selectbox(
-            "원하는 분위기",
-            ["활기찬", "차분한", "고급스러운", "캐주얼한", "미래지향적", "자연친화적"]
-        )
-        fee = st.number_input(
-            "예상 입장료 (원)",
-            min_value=0,
-            max_value=10000000,
-            value=10000,
-            step=1000
-        )
-        place = st.radio(
-            "행사 장소",
-            ["실내", "실외"],
-            horizontal=True
-        )
-        extra = st.text_area(
-            "추가 요구사항 (선택)",
-            placeholder="예: 포토존이 필요해요 / 음식 부스를 많이 넣고 싶어요 / 무대를 크게 만들고 싶어요"
-        )
-
-    submitted = st.form_submit_button(
-        "✨ 행사장 설계안 생성하기",
-        use_container_width=True,
-        type="primary"
-    )
-
-if submitted:
-    result = recommend_layout(
-        event_type, people, duration, age_group, mood, fee, place
-    )
-
-    st.success("설계안이 생성되었습니다!")
-
-    st.subheader("2. 설계 결과")
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("행사 규모", result["size"])
-    c2.metric("예상 인원", f"{people:,}명")
-    c3.metric("권장 면적", f"{result['estimated_area']:,}㎡")
-    c4.metric("진행 시간", f"{duration:g}시간")
-
-    st.markdown("### 🗺️ 권장 공간 배치")
-    st.pyplot(draw_floor_plan(result, place), clear_figure=True)
-
-    left, right = st.columns(2)
-
-    with left:
-        st.markdown("### 📍 핵심 공간")
-        for zone in result["zones"]:
-            st.markdown(f"- **{zone}**")
-
-        st.markdown("### 💡 행사 유형별 설계 포인트")
-        for item in result["features"]:
-            st.markdown(f"- {item}")
-
-    with right:
-        st.markdown("### 🎨 분위기 설계")
-        st.write(result["mood_plan"])
-        st.write(result["mood_detail"])
-
-        st.markdown("### 👥 대상 연령대")
-        st.write(result["age_plan"])
-
-        st.markdown("### ⏱️ 진행 시간")
-        st.write(result["time_plan"])
-
-        st.markdown("### 💳 입장료")
-        st.write(result["fee_plan"])
-
-    st.markdown("### 🏢 장소 조건")
-    st.info(result["place_plan"])
-
-    st.markdown("### 🛡️ 안전·동선 설계")
-    for item in result["safety"]:
-        st.markdown(f"- {item}")
-
-    if extra.strip():
-        st.markdown("### 📝 추가 요구사항 반영")
-        st.write(f"입력하신 요구사항: **{extra.strip()}**")
-        st.caption("추가 요구사항은 기본 설계안과 함께 검토할 수 있도록 표시했습니다.")
-
-    st.divider()
-    st.caption("※ 본 결과는 행사 기획을 위한 설계 제안이며, 실제 행사에서는 행사장 구조·소방·전기·피난·수용인원 등 관련 안전기준을 반드시 별도로 확인해야 합니다.")
-
+r=st.session_state.result
+if r:
+    st.divider(); st.markdown("## 2. 행사장 설계 결과")
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric("행사 규모",r["scale"]); c2.metric("예상 인원",f"{r['n']:,}명"); c3.metric("권장 면적",f"{r['area']:,}㎡"); c4.metric("진행 시간",f"{r['h']:g}시간")
+    st.markdown("### 🗺️ 상세 행사장 배치도")
+    st.caption("입력한 행사 조건을 기준으로 생성한 기획용 배치도입니다.")
+    st.pyplot(floor(r),clear_figure=True)
+    st.markdown("### 📌 배치도 구성")
+    g=st.columns(4)
+    g[0].markdown("**① 입구**  \n접수·입장")
+    g[1].markdown("**② 메인 공간**  \n핵심 프로그램")
+    g[2].markdown("**③ 부대 공간**  \n체험·휴식·운영")
+    g[3].markdown("**④ 출구**  \n퇴장 흐름")
+    st.divider(); st.markdown("## 3. 배치도 상세 설명")
+    for x in explanations(r):
+        if x: st.markdown(x); st.write("")
+    st.divider(); st.markdown("### 📍 공간별 구성")
+    cols=st.columns(3)
+    zones=list(dict.fromkeys([r["main"],*r["secondary"],"입구·접수","출구","운영본부","안전·응급존","화장실","안전통로"]))
+    for i,z in enumerate(zones): cols[i%3].markdown(f"- **{z}**")
+    st.markdown("### 🔄 전체 이동 흐름")
+    st.info("입구·접수 → 주요 행사 공간 → 체험·부대시설 → 휴게·편의시설 → 출구 순으로 이동하도록 구성했습니다.")
+    st.markdown("### 🛡️ 안전 체크")
+    for x in ["입구와 출구의 병목 최소화","비상구·피난 동선을 부스나 장식물로 막지 않기","운영본부에서 주요 공간을 확인할 수 있도록 배치","안전·응급존의 접근성 확보","실외 행사라면 우천·강풍·폭염 등 대체 계획 마련"]:
+        st.markdown("- "+x)
 else:
-    st.markdown(
-        """
-        ### 🚀 이렇게 사용하세요
-        1. 행사 정보를 입력합니다.
-        2. **행사장 설계안 생성하기**를 누릅니다.
-        3. 예상 규모와 공간 배치, 동선, 분위기, 안전 요소를 확인합니다.
-
-        **핵심 아이디어:**  
-        사용자의 요구사항을 입력값으로 받아 행사 목적과 규모에 맞는 공간 구성을 자동으로 제안합니다.
-        """
-    )
+    st.markdown("### 🚀 사용 방법\n1. 행사 정보를 입력합니다.\n2. 원하는 분위기와 추가 요구사항을 입력합니다.\n3. **상세 행사장 설계하기**를 누릅니다.\n4. 상세 배치도와 배치 이유를 확인합니다.")
+st.divider()
+st.caption("VIBE SPACE DESIGNER | 실제 행사에서는 현장 실측 및 소방·피난·전기·수용인원 등 관련 안전기준을 별도로 확인해야 합니다.")
